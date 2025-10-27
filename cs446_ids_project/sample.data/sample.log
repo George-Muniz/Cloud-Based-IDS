@@ -1,0 +1,6 @@
+2025-10-26 09:15:23  LOGIN SUCCESS  user=admin  ip=10.0.0.14
+2025-10-26 09:15:27  LOGIN FAILURE  user=root  ip=192.168.0.23
+2025-10-26 09:16:02  SQL INJECTION attempt detected
+2025-10-26 09:16:45  ACCESS DENIED  user=test  ip=172.16.5.8
+2025-10-26 09:17:10  FILE UPLOAD  filename="malware.exe"
+2025-10-26 09:18:34  CONNECTION CLOSED  session_id=abcd1234

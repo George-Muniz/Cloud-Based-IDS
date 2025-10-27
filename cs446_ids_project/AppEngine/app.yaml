@@ -1,0 +1,10 @@
+runtime: python313
+entrypoint: gunicorn -w 1 -k sync -b :$PORT main:app
+instance_class: F2
+automatic_scaling:
+  min_instances: 1
+  max_instances: 1
+env_variables:
+  IDS_INPUT_BUCKET: "ids-input-cs-project"
+  IDS_RESULTS_BUCKET: "ids-results-cs-project"
+  IDS_RESULTS_PREFIX: "results/"
