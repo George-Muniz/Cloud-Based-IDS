@@ -40,10 +40,10 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
     # Use a smaller sample if this is the huge CSIC log.
     if "csic" in blob_name.lower():
         MAX_ROWS = 200
+        MAX_DETAILS = 200
     else:
         MAX_ROWS = 500
-
-    MAX_DETAILS = 300  # max events to include in "results"
+        MAX_DETAILS = 300
 
     client = storage.Client()
     bucket = client.bucket(bucket_name)
