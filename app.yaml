@@ -1,5 +1,4 @@
 runtime: python311
-service: ids-app-engine
 
 entrypoint: gunicorn -k uvicorn.workers.UvicornWorker -b :$PORT api.main:app
 
