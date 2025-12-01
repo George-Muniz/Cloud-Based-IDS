@@ -23,29 +23,42 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
 
     total = 0
     flagged = 0
-    details: List[Dict] = []
+    details = []
 
     for row in reader:
+        raw_path = row.get("path", "") or ""
+        raw_payload = row.get("payload", "") or ""
+
+        # --- Fix CSIC-style path: extract only the /route part ---
+        if "://" in raw_path:
+            try:
+                raw_path = raw_path.split("://", 1)[1]
+                raw_path = raw_path.split("/", 1)[1]
+                raw_path = "/" + raw_path
+            except Exception:
+                pass  # fallback to original
+
+        # --- Fix payload: collapse multi-line headers ---
+        payload_clean = " ".join(raw_payload.splitlines()).strip()
+
         event = {
             "src_ip": row.get("src_ip", ""),
             "dst_ip": row.get("dst_ip", ""),
-            "path": row.get("path", ""),
+            "path": raw_path,
             "method": row.get("method", ""),
-            "payload": row.get("payload", ""),
+            "payload": payload_clean,
         }
+
         det = detect(event)
         total += 1
         if det["is_intrusion"]:
             flagged += 1
 
-        details.append({
-            "event": event,
-            "detection": det,
-        })
+        details.append({"event": event, "detection": det})
 
     return {
         "total_events": total,
         "flagged": flagged,
-        "flagged_ratio": (flagged / total) if total else 0.0,
+        "flagged_ratio": flagged / total if total else 0,
         "results": details,
     }
