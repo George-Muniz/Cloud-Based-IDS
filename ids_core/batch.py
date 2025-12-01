@@ -3,6 +3,7 @@ import csv
 import logging
 from typing import List, Dict
 from urllib.parse import urlparse
+
 from google.cloud import storage
 from .detector import detect
 
@@ -10,41 +11,33 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_gs_path(gs_path: str):
-    assert gs_path.startswith("gs://")
-    _, rest = gs_path.split("gs://", 1)
-    bucket, blob = rest.split("/", 1)
-    return bucket, blob
-
-
-def _safe_csv_reader(text: str):
     """
-    A safer CSV iterator:
-    - tries DictReader first
-    - falls back to manual line parsing if DictReader crashes (CSIC logs)
+    Parse a gs://bucket/path/to/file.csv string into (bucket, blob_name).
     """
-    try:
-        # Normal CSV works
-        return csv.DictReader(io.StringIO(text))
-    except Exception:
-        logger.warning("DictReader failed → using fallback parser.")
+    if not gs_path.startswith("gs://"):
+        raise ValueError(f"gs_path must start with gs://, got: {gs_path}")
 
-        lines = text.split("\n")
-        if not lines:
-            return []
+    # Strip the prefix and split once on the first slash
+    rest = gs_path[len("gs://") :]
+    parts = rest.split("/", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Invalid gs_path (missing blob name): {gs_path}")
 
-        header = [h.strip() for h in lines[0].split(",")]
-
-        for line in lines[1:]:
-            if not line.strip():
-                continue
-            parts = line.split(",", maxsplit=len(header) - 1)
-            row = dict(zip(header, parts))
-            yield row
+    bucket_name, blob_name = parts
+    return bucket_name, blob_name
 
 
 def analyze_gcs_csv(gs_path: str) -> Dict:
-    MAX_ROWS = 1000
-    MAX_DETAILS = 500
+    """
+    Load a CSV from GCS and run our IDS detector on each row.
+
+    Handles:
+      - training-style csv with an extra 'label' column (ignored)
+      - CSIC-style logs where 'path' is a full URL (we keep only the path)
+    """
+    # Hard limits so CSIC doesn't blow up memory / CPU
+    MAX_ROWS = 5000       # max rows to fully process
+    MAX_DETAILS = 500     # max events to include in "results"
 
     bucket_name, blob_name = _parse_gs_path(gs_path)
 
@@ -52,30 +45,36 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
 
+    # Download CSV as bytes and wrap in a text stream
     data_bytes = blob.download_as_bytes()
-    text = data_bytes.decode("utf-8", errors="replace")
+    text_stream = io.StringIO(data_bytes.decode("utf-8", errors="replace"))
 
-    reader = _safe_csv_reader(text)
+    reader = csv.DictReader(text_stream)
 
-    total = 0
+    total = 0      # rows actually processed (up to MAX_ROWS)
     flagged = 0
     skipped = 0
     details: List[Dict] = []
 
     for row in reader:
+        if not row:
+            # Completely empty line
+            continue
+
         if total >= MAX_ROWS:
+            # Stop before we blow up CPU/memory/response size
             break
 
         try:
+            # --- Normalize path (handles CSIC full URLs) ---
             raw_path = (row.get("path") or "").strip()
-
-            # Extract URL path for CSIC logs containing full URLs
             if raw_path.startswith("http://") or raw_path.startswith("https://"):
                 parsed = urlparse(raw_path)
                 path = parsed.path or raw_path
             else:
                 path = raw_path
 
+            # --- Build event dict for our detector ---
             event = {
                 "src_ip": (row.get("src_ip") or "").strip(),
                 "dst_ip": (row.get("dst_ip") or "").strip(),
@@ -83,6 +82,8 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
                 "method": (row.get("method") or "").strip(),
                 "payload": row.get("payload") or "",
             }
+            # NOTE: if there's a 'label' column (like sample_logs.csv), we just ignore it.
+            # It will be present in row but we don't use it.
 
             det = detect(event)
 
@@ -92,15 +93,17 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
             continue
 
         total += 1
-
         if det.get("is_intrusion"):
             flagged += 1
 
+        # Only keep a sample of detailed results to keep JSON small
         if len(details) < MAX_DETAILS:
-            details.append({
-                "event": event,
-                "detection": det,
-            })
+            details.append(
+                {
+                    "event": event,
+                    "detection": det,
+                }
+            )
 
     return {
         "total_events": total,
