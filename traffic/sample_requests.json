@@ -1,0 +1,23 @@
+[
+  {
+    "src_ip": "10.0.0.1",
+    "dst_ip": "192.168.1.10",
+    "path": "/login",
+    "method": "POST",
+    "payload": "username=user&password=pass123"
+  },
+  {
+    "src_ip": "123.45.67.89",
+    "dst_ip": "192.168.1.10",
+    "path": "/login",
+    "method": "POST",
+    "payload": "username=admin&password=' OR 1=1 --"
+  },
+  {
+    "src_ip": "203.0.113.8",
+    "dst_ip": "192.168.1.10",
+    "path": "/wp-admin",
+    "method": "GET",
+    "payload": ""
+  }
+]

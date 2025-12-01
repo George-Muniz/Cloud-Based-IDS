@@ -1,0 +1,17 @@
+runtime: python311
+service: ids-app-engine
+
+entrypoint: gunicorn -k uvicorn.workers.UvicornWorker -b :$PORT api.main:app
+
+env_variables:
+  GCS_LOG_BUCKET: "ids-logs-george-thomas"
+  IPINFO_TOKEN: "your_ipinfo_token_here"
+
+automatic_scaling:
+  target_cpu_utilization: 0.65
+  min_instances: 0
+  max_instances: 2
+
+handlers:
+  - url: /.*
+    script: auto
