@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+requests
+pandas
+scikit-learn
+numpy
+google-cloud-storage
+gunicorn
