@@ -17,7 +17,6 @@ def _parse_gs_path(gs_path: str):
     if not gs_path.startswith("gs://"):
         raise ValueError(f"gs_path must start with gs://, got: {gs_path}")
 
-    # Strip the prefix and split once on the first slash
     rest = gs_path[len("gs://") :]
     parts = rest.split("/", 1)
     if len(parts) != 2:
@@ -35,34 +34,36 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
       - training-style csv with an extra 'label' column (ignored)
       - CSIC-style logs where 'path' is a full URL (we keep only the path)
     """
-    # Hard limits so CSIC doesn't blow up memory / CPU
-    MAX_ROWS = 5000       # max rows to fully process
-    MAX_DETAILS = 500     # max events to include in "results"
-
     bucket_name, blob_name = _parse_gs_path(gs_path)
+
+    # Hard limits so CSIC doesn't blow up memory / CPU
+    # Use a smaller sample if this is the huge CSIC log.
+    if "csic" in blob_name.lower():
+        MAX_ROWS = 1500
+    else:
+        MAX_ROWS = 5000
+
+    MAX_DETAILS = 500  # max events to include in "results"
 
     client = storage.Client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
 
-    # Download CSV as bytes and wrap in a text stream
     data_bytes = blob.download_as_bytes()
     text_stream = io.StringIO(data_bytes.decode("utf-8", errors="replace"))
 
     reader = csv.DictReader(text_stream)
 
-    total = 0      # rows actually processed (up to MAX_ROWS)
+    total = 0
     flagged = 0
     skipped = 0
     details: List[Dict] = []
 
     for row in reader:
         if not row:
-            # Completely empty line
             continue
 
         if total >= MAX_ROWS:
-            # Stop before we blow up CPU/memory/response size
             break
 
         try:
@@ -82,8 +83,6 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
                 "method": (row.get("method") or "").strip(),
                 "payload": row.get("payload") or "",
             }
-            # NOTE: if there's a 'label' column (like sample_logs.csv), we just ignore it.
-            # It will be present in row but we don't use it.
 
             det = detect(event)
 
@@ -96,7 +95,6 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
         if det.get("is_intrusion"):
             flagged += 1
 
-        # Only keep a sample of detailed results to keep JSON small
         if len(details) < MAX_DETAILS:
             details.append(
                 {
