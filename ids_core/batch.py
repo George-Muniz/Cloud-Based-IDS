@@ -1,8 +1,12 @@
 import io
 import csv
+import logging
 from typing import List, Dict
+from urllib.parse import urlparse
 from google.cloud import storage
 from .detector import detect
+
+logger = logging.getLogger(__name__)
 
 def _parse_gs_path(gs_path: str):
     assert gs_path.startswith("gs://")
@@ -17,48 +21,55 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
 
+    # decode safely; csv.DictReader already handles quoted multi-line fields
     data_bytes = blob.download_as_bytes()
-    text_stream = io.StringIO(data_bytes.decode("utf-8"))
+    text_stream = io.StringIO(data_bytes.decode("utf-8", errors="replace"))
     reader = csv.DictReader(text_stream)
 
     total = 0
     flagged = 0
-    details = []
+    skipped = 0
+    details: List[Dict] = []
 
     for row in reader:
-        raw_path = row.get("path", "") or ""
-        raw_payload = row.get("payload", "") or ""
+        try:
+            # Handle CSIC-style full URLs in path
+            raw_path = (row.get("path") or "").strip()
+            if raw_path.startswith("http://") or raw_path.startswith("https://"):
+                parsed = urlparse(raw_path)
+                path = parsed.path or raw_path
+            else:
+                path = raw_path
 
-        # --- Fix CSIC-style path: extract only the /route part ---
-        if "://" in raw_path:
-            try:
-                raw_path = raw_path.split("://", 1)[1]
-                raw_path = raw_path.split("/", 1)[1]
-                raw_path = "/" + raw_path
-            except Exception:
-                pass  # fallback to original
+            event = {
+                "src_ip": (row.get("src_ip") or "").strip(),
+                "dst_ip": (row.get("dst_ip") or "").strip(),
+                "path": path,
+                "method": (row.get("method") or "").strip(),
+                "payload": row.get("payload") or "",
+            }
 
-        # --- Fix payload: collapse multi-line headers ---
-        payload_clean = " ".join(raw_payload.splitlines()).strip()
+            det = detect(event)
+        except Exception as e:
+            # If any row is weird/malformed, log it and continue instead of 500
+            skipped += 1
+            logger.exception("Error processing row from %s, skipping: %s", gs_path, e)
+            continue
 
-        event = {
-            "src_ip": row.get("src_ip", ""),
-            "dst_ip": row.get("dst_ip", ""),
-            "path": raw_path,
-            "method": row.get("method", ""),
-            "payload": payload_clean,
-        }
-
-        det = detect(event)
         total += 1
-        if det["is_intrusion"]:
+        if det.get("is_intrusion"):
             flagged += 1
 
-        details.append({"event": event, "detection": det})
+        details.append({
+            "event": event,
+            "detection": det,
+        })
 
     return {
         "total_events": total,
         "flagged": flagged,
-        "flagged_ratio": flagged / total if total else 0,
+        "flagged_ratio": (flagged / total) if total else 0.0,
         "results": details,
+        # optional extra field – nice for debugging/reporting
+        "skipped": skipped,
     }
