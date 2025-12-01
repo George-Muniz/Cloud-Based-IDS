@@ -3,7 +3,6 @@ import csv
 import logging
 from typing import List, Dict
 from urllib.parse import urlparse
-
 from google.cloud import storage
 from .detector import detect
 
@@ -17,10 +16,35 @@ def _parse_gs_path(gs_path: str):
     return bucket, blob
 
 
+def _safe_csv_reader(text: str):
+    """
+    A safer CSV iterator:
+    - tries DictReader first
+    - falls back to manual line parsing if DictReader crashes (CSIC logs)
+    """
+    try:
+        # Normal CSV works
+        return csv.DictReader(io.StringIO(text))
+    except Exception:
+        logger.warning("DictReader failed → using fallback parser.")
+
+        lines = text.split("\n")
+        if not lines:
+            return []
+
+        header = [h.strip() for h in lines[0].split(",")]
+
+        for line in lines[1:]:
+            if not line.strip():
+                continue
+            parts = line.split(",", maxsplit=len(header) - 1)
+            row = dict(zip(header, parts))
+            yield row
+
+
 def analyze_gcs_csv(gs_path: str) -> Dict:
-    # Hard limits to keep App Engine happy on large files like CSIC
-    MAX_ROWS = 1000        # max rows to fully process
-    MAX_DETAILS = 500      # max events to include in "results"
+    MAX_ROWS = 1000
+    MAX_DETAILS = 500
 
     bucket_name, blob_name = _parse_gs_path(gs_path)
 
@@ -29,35 +53,23 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
     blob = bucket.blob(blob_name)
 
     data_bytes = blob.download_as_bytes()
-    text_stream = io.StringIO(data_bytes.decode("utf-8", errors="replace"))
+    text = data_bytes.decode("utf-8", errors="replace")
 
-    # Use DictReader but be defensive about bad CSV rows
-    reader = csv.DictReader(text_stream)
+    reader = _safe_csv_reader(text)
 
-    total = 0          # rows actually processed (up to MAX_ROWS)
+    total = 0
     flagged = 0
     skipped = 0
     details: List[Dict] = []
 
-    while True:
-        # --- Safely advance the CSV reader ---
-        try:
-            row = next(reader)
-        except StopIteration:
-            break
-        except csv.Error as e:
-            # Badly formatted CSV row: skip and keep going
-            skipped += 1
-            logger.exception("CSV parse error in %s, skipping row: %s", gs_path, e)
-            continue
-
+    for row in reader:
         if total >= MAX_ROWS:
-            # Stop before we blow up CPU/memory/response size
             break
 
         try:
-            # Handle CSIC-style full URLs in path
             raw_path = (row.get("path") or "").strip()
+
+            # Extract URL path for CSIC logs containing full URLs
             if raw_path.startswith("http://") or raw_path.startswith("https://"):
                 parsed = urlparse(raw_path)
                 path = parsed.path or raw_path
@@ -73,16 +85,17 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
             }
 
             det = detect(event)
+
         except Exception as e:
             skipped += 1
             logger.exception("Error processing row from %s, skipping: %s", gs_path, e)
             continue
 
         total += 1
+
         if det.get("is_intrusion"):
             flagged += 1
 
-        # Only keep a sample of detailed results to keep JSON small
         if len(details) < MAX_DETAILS:
             details.append({
                 "event": event,
