@@ -3,10 +3,12 @@ import csv
 import logging
 from typing import List, Dict
 from urllib.parse import urlparse
+
 from google.cloud import storage
 from .detector import detect
 
 logger = logging.getLogger(__name__)
+
 
 def _parse_gs_path(gs_path: str):
     assert gs_path.startswith("gs://")
@@ -14,24 +16,32 @@ def _parse_gs_path(gs_path: str):
     bucket, blob = rest.split("/", 1)
     return bucket, blob
 
+
 def analyze_gcs_csv(gs_path: str) -> Dict:
+    # Hard limits to keep App Engine happy on large files like CSIC
+    MAX_ROWS = 5000        # max rows to fully process
+    MAX_DETAILS = 500      # max events to include in "results"
+
     bucket_name, blob_name = _parse_gs_path(gs_path)
 
     client = storage.Client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
 
-    # decode safely; csv.DictReader already handles quoted multi-line fields
     data_bytes = blob.download_as_bytes()
     text_stream = io.StringIO(data_bytes.decode("utf-8", errors="replace"))
     reader = csv.DictReader(text_stream)
 
-    total = 0
+    total = 0          # rows actually processed (up to MAX_ROWS)
     flagged = 0
     skipped = 0
     details: List[Dict] = []
 
     for row in reader:
+        if total >= MAX_ROWS:
+            # Stop before we blow up CPU/memory/response size
+            break
+
         try:
             # Handle CSIC-style full URLs in path
             raw_path = (row.get("path") or "").strip()
@@ -51,7 +61,6 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
 
             det = detect(event)
         except Exception as e:
-            # If any row is weird/malformed, log it and continue instead of 500
             skipped += 1
             logger.exception("Error processing row from %s, skipping: %s", gs_path, e)
             continue
@@ -60,16 +69,19 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
         if det.get("is_intrusion"):
             flagged += 1
 
-        details.append({
-            "event": event,
-            "detection": det,
-        })
+        # Only keep a sample of detailed results to keep JSON small
+        if len(details) < MAX_DETAILS:
+            details.append({
+                "event": event,
+                "detection": det,
+            })
 
     return {
         "total_events": total,
         "flagged": flagged,
         "flagged_ratio": (flagged / total) if total else 0.0,
         "results": details,
-        # optional extra field – nice for debugging/reporting
         "skipped": skipped,
+        "max_rows": MAX_ROWS,
+        "max_details": MAX_DETAILS,
     }
