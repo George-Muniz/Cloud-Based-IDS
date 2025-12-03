@@ -1,26 +1,171 @@
-from .rules import rule_engine
+import logging
+import json
+from typing import Dict, Any
 from .model import ml_score
+from .rules import rule_engine
 from .apis import geoip_lookup
 
-def detect(event: dict) -> dict:
-    rule_result = rule_engine(event)
-    rule_score = 1.0 if rule_result["is_intrusion"] else 0.0
+logger = logging.getLogger(__name__)
 
-    prob = ml_score(event)
-    combined = max(rule_score, prob)
+# structured logging to Cloud Logging
+try:
+    from google.cloud import logging as cloud_logging
 
-    suspicious = combined >= 0.5
-    geo = None
+    _cloud_logging_client = cloud_logging.Client()
+    _structured_logger = _cloud_logging_client.logger("ids-detector")
+except Exception:
+    _structured_logger = None
 
-    if suspicious:
-        src_ip = event.get("src_ip")
-        geo = geoip_lookup(src_ip)
 
-    return {
-        "is_intrusion": suspicious,
-        "score": combined,
-        "rule_score": rule_score,
-        "ml_score": prob,
-        "rules_triggered": rule_result["rules_triggered"],
-        "geoip": geo,
+def _normalize_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Light normalization so rules + ML can work across different CSV schemas
+    without breaking existing behavior.
+    """
+    normalized = dict(event)
+
+    # Normalize IP
+    if "src_ip" not in normalized:
+        for key in ("ip", "client_ip", "remote_addr", "c_ip"):
+            if key in normalized:
+                normalized.setdefault("src_ip", normalized.get(key))
+                break
+
+    # Normalize path / url
+    if "path" not in normalized:
+        for key in ("path", "url", "cs_uri_stem", "request_uri"):
+            if key in normalized and normalized[key]:
+                normalized["path"] = normalized[key]
+                break
+
+    # Normalize method
+    if "method" not in normalized:
+        for key in ("method", "cs_method", "http_method"):
+            if key in normalized:
+                normalized["method"] = normalized[key]
+                break
+
+    # Normalize query / payload
+    if "query" not in normalized:
+        for key in ("query", "cs_uri_query"):
+            if key in normalized:
+                normalized["query"] = normalized[key]
+                break
+
+    if "body" not in normalized:
+        for key in ("body", "payload", "request_body"):
+            if key in normalized:
+                normalized["body"] = normalized[key]
+                break
+
+    return normalized
+
+
+def _log_structured_detection(
+    raw_event: Dict[str, Any],
+    normalized_event: Dict[str, Any],
+    result: Dict[str, Any],
+) -> None:
+    """
+    Send a structured log to Cloud Logging if available,
+    otherwise log JSON to standard logging.
+    """
+    src_ip = normalized_event.get("src_ip") or raw_event.get("ip")
+    path = normalized_event.get("path") or raw_event.get("url")
+    method = normalized_event.get("method")
+    status = normalized_event.get("status") or raw_event.get("status")
+
+    payload = {
+        "message": "ids_detection",
+        "ids": {
+            "event": {
+                "src_ip": src_ip,
+                "method": method,
+                "path": path,
+                "status": status,
+            },
+            "detection": {
+                "is_malicious": result.get("is_malicious"),
+                "score": result.get("score"),
+                "rule_score": result.get("rule_score"),
+                "ml_score": result.get("ml_score"),
+                "rules_triggered": result.get("rules_triggered", []),
+                "severity": result.get("severity"),
+                "geo": result.get("geo", {}),
+            },
+        },
     }
+
+    if _structured_logger is not None:
+        try:
+            _structured_logger.log_struct(payload)
+        except Exception:
+            logger.exception("Failed to write structured detection log")
+    else:
+        logger.info("IDS_DETECTION %s", json.dumps(payload))
+
+
+def detect(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Main detection entrypoint.
+
+    Returns a dict (backwards compatible):
+        {
+            "is_malicious": bool,
+            "score": float,          # combined score
+            "rule_score": float,     # 1.0 if any rule hits else 0.0
+            "ml_score": float,       # probability from ML model
+            "rules_triggered": [...],
+            "severity": "low|medium|high",
+            "geo": {...},            # optional GeoIP fields
+        }
+    """
+    normalized = _normalize_event(event)
+
+    # 1) Rule-based detection
+    rule_result = rule_engine(normalized)
+    rule_score = 1.0 if rule_result.get("is_intrusion") else 0.0
+    rules_triggered = rule_result.get("rules_triggered", [])
+
+    # 2) ML-based detection
+    ml_prob = ml_score(normalized)  # float in [0,1]
+
+    # Simple fusion: take the max of the two scores
+    combined_score = max(rule_score, ml_prob)
+
+    # Thresholds – you can tune these:
+    suspicious = combined_score >= 0.5
+
+    # Severity heuristic
+    if combined_score >= 0.9 or len(rules_triggered) >= 3:
+        severity = "high"
+    elif combined_score >= 0.7 or len(rules_triggered) >= 1:
+        severity = "medium"
+    elif suspicious:
+        severity = "low"
+    else:
+        severity = "none"
+
+    result: Dict[str, Any] = {
+        "is_malicious": suspicious,
+        "score": float(combined_score),
+        "rule_score": float(rule_score),
+        "ml_score": float(ml_prob),
+        "rules_triggered": rules_triggered,
+        "severity": severity,
+    }
+
+    # GeoIP lookup for malicious events
+    src_ip = normalized.get("src_ip")
+    if suspicious and src_ip:
+        try:
+            geo = geoip_lookup(src_ip)
+        except Exception:
+            logger.exception("GeoIP lookup failed for %s", src_ip)
+            geo = {}
+        result["geo"] = geo
+
+    # Log in a structured way for Cloud Logging / dashboards
+    _log_structured_detection(event, normalized, result)
+
+    return result

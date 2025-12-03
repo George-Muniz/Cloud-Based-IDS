@@ -1,47 +1,61 @@
+import logging
 import os
-import requests
+from typing import Dict, Any
 
-IPINFO_TOKEN = os.getenv("IPINFO_TOKEN", "")
+logger = logging.getLogger(__name__)
 
-def geoip_lookup(ip: str) -> dict:
+# Optional: IPinfo token for higher rate limits / more fields
+IPINFO_TOKEN = os.getenv("IPINFO_TOKEN")
+
+try:
+    import requests  # type: ignore
+except Exception:  # requests may not be installed in some environments
+    requests = None  # type: ignore[assignment]
+
+
+def geoip_lookup(ip: str) -> Dict[str, Any]:
     """
-    Simple IP geo lookup using ipinfo.io.
-    Set IPINFO_TOKEN in environment or app.yaml.
+    Basic GeoIP lookup using ipinfo.io.
+
+    Returns a small dict with location info.
+    If requests is not available or something fails, returns {}.
     """
-    if not ip or not IPINFO_TOKEN:
-        return {
-            "provider": "ipinfo",
-            "country": "unknown",
-            "org": "",
-            "error": "no_token_or_ip",
-        }
+    if not ip:
+        return {}
+
+    if requests is None:
+        logger.debug("requests library not available; skipping GeoIP lookup")
+        return {}
 
     url = f"https://ipinfo.io/{ip}"
-    params = {"token": IPINFO_TOKEN}
+    params = {}
+    if IPINFO_TOKEN:
+        params["token"] = IPINFO_TOKEN
 
     try:
-        resp = requests.get(url, params=params, timeout=2)
-    except Exception as e:
-        return {
-            "provider": "ipinfo",
-            "country": "unknown",
-            "org": "",
-            "error": f"request_failed:{e}",
-        }
+        resp = requests.get(url, params=params, timeout=2.0)
+    except Exception:
+        logger.warning("GeoIP HTTP request failed for %s", ip, exc_info=True)
+        return {}
 
-    if not resp.ok:
-        return {
-            "provider": "ipinfo",
-            "country": "unknown",
-            "org": "",
-            "error": f"http_{resp.status_code}",
-        }
+    if resp.status_code != 200:
+        logger.warning(
+            "GeoIP lookup failed for %s with status %s", ip, resp.status_code
+        )
+        return {}
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except Exception:
+        logger.warning("Failed to parse GeoIP JSON for %s", ip, exc_info=True)
+        return {}
+
+    # Only return fields we actually care about
     return {
-        "provider": "ipinfo",
-        "country": data.get("country", "NA"),
-        "org": data.get("org", ""),
-        "city": data.get("city", ""),
-        "region": data.get("region", ""),
+        "ip": data.get("ip"),
+        "city": data.get("city"),
+        "region": data.get("region"),
+        "country": data.get("country"),
+        "loc": data.get("loc"),
+        "org": data.get("org"),
     }

@@ -1,97 +1,173 @@
 import io
 import csv
 import logging
-import pandas as pd
-from typing import List, Dict
+import os
+from typing import List, Dict, Any
 from urllib.parse import urlparse
+
+import pandas as pd
 from google.cloud import storage
+
 from .detector import detect
 
 logger = logging.getLogger(__name__)
 
+# Optional structured logger for batch-level metrics
+try:
+    from google.cloud import logging as cloud_logging
 
-def _parse_gs_path(gs_path: str):
+    _cloud_logging_client = cloud_logging.Client()
+    _structured_logger = _cloud_logging_client.logger("ids-batch")
+except Exception:
+    _structured_logger = None
+
+
+def _parse_gs_path(gs_path: str) -> tuple[str, str]:
+    """
+    Split a GCS path like gs://bucket/path/to/file.csv
+    into (bucket, blob_path).
+    """
     if not gs_path.startswith("gs://"):
         raise ValueError(f"gs_path must start with gs://, got: {gs_path}")
 
-    rest = gs_path[len("gs://") :]
-    parts = rest.split("/", 1)
-    if len(parts) != 2:
-        raise ValueError(f"Invalid gs_path (missing blob name): {gs_path}")
+    without_scheme = gs_path[5:]
+    bucket, _, blob = without_scheme.partition("/")
+    if not bucket or not blob:
+        raise ValueError(f"Invalid GCS path: {gs_path}")
 
-    bucket_name, blob_name = parts
-    return bucket_name, blob_name
+    return bucket, blob
 
 
-def analyze_gcs_csv(gs_path: str) -> Dict:
-    bucket_name, blob_name = _parse_gs_path(gs_path)
+def _row_to_event(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert a CSV row (dict) into an event dict that our detector can handle.
+    This is intentionally lightweight so it works with your existing datasets.
+    """
+    event: Dict[str, Any] = dict(row)
 
-    # Hard limits ONLY for how many detailed entries we return in "results".
-    # We now always process the *entire* file to get correct totals.
-    if "csic" in blob_name.lower():
-        MAX_ROWS = 200      # kept for response metadata/backwards-compat
-        MAX_DETAILS = 200   # how many detailed rows we keep in "results"
+    # Try to normalize request path/method if only a raw request line is present
+    request_line = event.get("request")
+    if isinstance(request_line, str) and " " in request_line:
+        try:
+            parts = request_line.split(" ")
+            if len(parts) >= 2:
+                method = parts[0]
+                url_part = parts[1]
+                event.setdefault("method", method)
+                # url_part might include querystring
+                parsed = urlparse(url_part)
+                event.setdefault("path", parsed.path or url_part)
+                if parsed.query:
+                    event.setdefault("query", parsed.query)
+        except Exception:
+            pass
+
+    # If there's a URL field, extract path/query from it
+    if "url" in event and isinstance(event["url"], str):
+        parsed = urlparse(event["url"])
+        if parsed.path and "path" not in event:
+            event["path"] = parsed.path
+        if parsed.query and "query" not in event:
+            event["query"] = parsed.query
+
+    return event
+
+
+def _log_batch_metrics(gs_path: str, summary: Dict[str, Any]) -> None:
+    """
+    Log aggregate metrics for the batch run, for use in dashboards.
+    """
+    payload = {
+        "message": "ids_batch_summary",
+        "ids": {
+            "batch": {
+                "gs_path": gs_path,
+                "total_events": summary.get("total_events"),
+                "flagged": summary.get("flagged"),
+                "flagged_ratio": summary.get("flagged_ratio"),
+                "skipped": summary.get("skipped"),
+                "max_rows": summary.get("max_rows"),
+                "max_details": summary.get("max_details"),
+            }
+        },
+    }
+
+    if _structured_logger is not None:
+        try:
+            _structured_logger.log_struct(payload)
+        except Exception:
+            logger.exception("Failed to write structured batch summary log")
     else:
-        MAX_ROWS = 500
-        MAX_DETAILS = 300
+        import json
+
+        logger.info("IDS_BATCH_SUMMARY %s", json.dumps(payload))
+
+
+# Caps to avoid blowing up on large files
+MAX_ROWS = int(os.getenv("IDS_MAX_ROWS", "10000"))
+MAX_DETAILS = int(os.getenv("IDS_MAX_DETAILS", "1000"))
+
+
+def analyze_batch(gs_path: str) -> Dict[str, Any]:
+    """
+    Load a CSV from GCS, run each row through the IDS, and return a summary.
+
+    Return shape (backwards compatible):
+        {
+            "total_events": int,
+            "flagged": int,
+            "flagged_ratio": float,
+            "results": [ ... detailed flagged events ... ],
+            "skipped": int,
+            "max_rows": int,
+            "max_details": int,
+        }
+    """
+    bucket_name, blob_name = _parse_gs_path(gs_path)
 
     client = storage.Client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
 
+    logger.info("Downloading log file from GCS: bucket=%s, blob=%s", bucket_name, blob_name)
+    data = blob.download_as_text()
+
+    # Use csv.DictReader so we don't depend on Pandas CSV quirks,
+    # but keep pandas imported in case you want to use it elsewhere.
+    f = io.StringIO(data)
+    reader = csv.DictReader(f)
+
     total = 0
     flagged = 0
     skipped = 0
-    details: List[Dict] = []
+    details: List[Dict[str, Any]] = []
 
-    # Stream the CSV directly from GCS as text, line by line.
-    # newline="" is important for csv.DictReader to behave correctly.
-    with blob.open("rt", newline="", encoding="utf-8", errors="replace") as text_stream:
-        reader = csv.DictReader(text_stream)
+    for row in reader:
+        total += 1
+        if total > MAX_ROWS:
+            logger.info("Reached MAX_ROWS=%d, stopping further processing", MAX_ROWS)
+            break
 
-        for row in reader:
-            if not row:
-                continue
+        try:
+            event = _row_to_event(row)
+            det = detect(event)
+        except Exception:
+            skipped += 1
+            logger.exception("Failed to analyze row; skipping")
+            continue
 
-            try:
-                # --- Normalize path (handles CSIC full URLs) ---
-                raw_path = (row.get("path") or "").strip()
-                if raw_path.startswith("http://") or raw_path.startswith("https://"):
-                    parsed = urlparse(raw_path)
-                    path = parsed.path or raw_path
-                else:
-                    path = raw_path
-
-                # --- Build event dict for our detector ---
-                event = {
-                    "src_ip": (row.get("src_ip") or "").strip(),
-                    "dst_ip": (row.get("dst_ip") or "").strip(),
-                    "path": path,
-                    "method": (row.get("method") or "").strip(),
-                    "payload": row.get("payload") or "",
-                }
-
-                det = detect(event)
-
-            except Exception as e:
-                skipped += 1
-                logger.exception("Error processing row from %s, skipping: %s", gs_path, e)
-                continue
-
-            total += 1
-            if det.get("is_intrusion"):
-                flagged += 1
-
-            # Only keep up to MAX_DETAILS detailed results to keep responses small.
+        if det.get("is_malicious"):
+            flagged += 1
             if len(details) < MAX_DETAILS:
                 details.append(
                     {
+                        "row_index": total - 1,
                         "event": event,
                         "detection": det,
                     }
                 )
 
-    return {
+    summary: Dict[str, Any] = {
         "total_events": total,
         "flagged": flagged,
         "flagged_ratio": (flagged / total) if total else 0.0,
@@ -100,3 +176,8 @@ def analyze_gcs_csv(gs_path: str) -> Dict:
         "max_rows": MAX_ROWS,
         "max_details": MAX_DETAILS,
     }
+
+    # Emit structured batch metrics for dashboards (Cloud Logging, etc.)
+    _log_batch_metrics(gs_path, summary)
+
+    return summary

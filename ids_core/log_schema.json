@@ -1,0 +1,32 @@
+{
+  "detection_log": {
+    "description": "Per-request IDS detection events",
+    "logger": "ids-detector",
+    "fields": {
+      "jsonPayload.ids.event.src_ip": "Source IP address of the HTTP request",
+      "jsonPayload.ids.event.method": "HTTP method (GET, POST, etc.)",
+      "jsonPayload.ids.event.path": "Request path or URL",
+      "jsonPayload.ids.event.status": "HTTP response status code",
+      "jsonPayload.ids.detection.is_malicious": "Boolean – whether the IDS flagged the event",
+      "jsonPayload.ids.detection.score": "Combined rule/ML score in [0,1]",
+      "jsonPayload.ids.detection.rule_score": "Rule-based score (1.0 if any rule hits)",
+      "jsonPayload.ids.detection.ml_score": "ML model probability score",
+      "jsonPayload.ids.detection.rules_triggered": "List of rule IDs that fired",
+      "jsonPayload.ids.detection.severity": "low|medium|high",
+      "jsonPayload.ids.detection.geo.country": "Iso country code from GeoIP lookup"
+    }
+  },
+  "batch_log": {
+    "description": "Per-batch summary from analyze_batch",
+    "logger": "ids-batch",
+    "fields": {
+      "jsonPayload.ids.batch.gs_path": "GCS path of the processed log file",
+      "jsonPayload.ids.batch.total_events": "Number of log rows processed",
+      "jsonPayload.ids.batch.flagged": "Number of rows flagged as malicious",
+      "jsonPayload.ids.batch.flagged_ratio": "flagged / total_events",
+      "jsonPayload.ids.batch.skipped": "Rows skipped due to parsing/detection errors",
+      "jsonPayload.ids.batch.max_rows": "Processing cap for rows",
+      "jsonPayload.ids.batch.max_details": "Cap on detailed results stored"
+    }
+  }
+}
