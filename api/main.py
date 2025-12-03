@@ -89,31 +89,43 @@ def analyze_batch(gs_path: str = Query(..., description="gs://bucket/path.csv"))
         _stats["total_events"] += summary.get("total_events", 0)
         _stats["alerts"] += summary.get("flagged", 0)
 
-        # 3) Log a structured summary line for Cloud Logging / Monitoring
+        # 3) Build a structured summary line
+        log_payload = {
+            "log_type": "IDS_RESULTS",
+            "dataset": gs_path,
+            "total_events": summary.get("total_events"),
+            "flagged": summary.get("flagged"),
+            "flagged_ratio": summary.get("flagged_ratio"),
+            "skipped": summary.get("skipped"),
+        }
+
+        # 4) Print to stdout so App Engine definitely captures it
+        #    This will show up in Cloud Logging as textPayload.
+        print("IDS_RESULTS_LOG " + json.dumps(log_payload), flush=True)
+
+        # (Optional) still log via logging module too
         try:
-            log_payload = {
-                "log_type": "IDS_RESULTS",
-                "dataset": gs_path,
-                "total_events": summary.get("total_events"),
-                "flagged": summary.get("flagged"),
-                "flagged_ratio": summary.get("flagged_ratio"),
-                "skipped": summary.get("skipped"),
-            }
-            logger.info(json.dumps(log_payload))
+            logger.info("IDS_RESULTS_LOG " + json.dumps(log_payload))
         except Exception:
-            # If logging fails, we still want to return the API response
             pass
 
-        # 4) Return the full summary as before
+        # 5) Return the full summary as before
         return summary
     except Exception as e:
         _stats["errors"] += 1
-        logger.error(json.dumps({
+
+        error_payload = {
             "log_type": "IDS_ERROR",
             "scope": "batch",
             "dataset": gs_path,
             "error": str(e),
-        }))
+        }
+        print("IDS_RESULTS_ERROR " + json.dumps(error_payload), flush=True)
+        try:
+            logger.error("IDS_RESULTS_ERROR " + json.dumps(error_payload))
+        except Exception:
+            pass
+
         # raise HTTPException so App Engine returns a JSON 500, not HTML
         raise HTTPException(status_code=500, detail=str(e))
 
