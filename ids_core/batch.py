@@ -4,15 +4,12 @@ import logging
 import os
 from typing import List, Dict, Any
 from urllib.parse import urlparse
-
-import pandas as pd
 from google.cloud import storage
-
 from .detector import detect
 
 logger = logging.getLogger(__name__)
 
-# Optional structured logger for batch-level metrics
+# structured logger for batch-level metrics
 try:
     from google.cloud import logging as cloud_logging
 
