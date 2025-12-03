@@ -102,8 +102,7 @@ def _log_batch_metrics(gs_path: str, summary: Dict[str, Any]) -> None:
 
 # Caps to avoid blowing up on large files
 MAX_ROWS = int(os.getenv("IDS_MAX_ROWS", "10000"))
-MAX_DETAILS = int(os.getenv("IDS_MAX_DETAILS", "1000"))
-
+MAX_DETAILS = int(os.getenv("IDS_MAX_DETAILS", "200"))
 
 def analyze_batch(gs_path: str) -> Dict[str, Any]:
     """
@@ -129,8 +128,6 @@ def analyze_batch(gs_path: str) -> Dict[str, Any]:
     logger.info("Downloading log file from GCS: bucket=%s, blob=%s", bucket_name, blob_name)
     data = blob.download_as_text()
 
-    # Use csv.DictReader so we don't depend on Pandas CSV quirks,
-    # but keep pandas imported in case you want to use it elsewhere.
     f = io.StringIO(data)
     reader = csv.DictReader(f)
 
@@ -178,3 +175,11 @@ def analyze_batch(gs_path: str) -> Dict[str, Any]:
     _log_batch_metrics(gs_path, summary)
 
     return summary
+
+# Backwards-compatible alias for older code
+def analyze_gcs_csv(gs_path: str) -> Dict[str, Any]:
+    """
+    Legacy wrapper kept for compatibility.
+    Internally just calls analyze_batch(gs_path).
+    """
+    return analyze_batch(gs_path)

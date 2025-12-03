@@ -2,7 +2,7 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from ids_core.detector import detect
-from ids_core.batch import analyze_gcs_csv
+from ids_core.batch import analyze_batch
 import os
 import logging
 import json
@@ -83,7 +83,7 @@ def analyze_batch(gs_path: str = Query(..., description="gs://bucket/path.csv"))
     """
     try:
         # 1) Run your existing batch logic
-        summary = analyze_gcs_csv(gs_path)
+        summary = analyze_batch(gs_path)
 
         # 2) Update in-memory stats (unchanged)
         _stats["total_events"] += summary.get("total_events", 0)
