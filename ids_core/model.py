@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 _MODEL = None
 _MODEL_INFO: Dict[str, Any] | None = None
 
+# Threshold used to decide "malicious" vs "benign" at runtime.
+# This will be loaded from model_info.json if present.
+_DECISION_THRESHOLD: float = 0.5
+
 # Where to look for the model file
 _MODEL_PATH_CANDIDATES: List[str | None] = [
     os.environ.get("IDS_MODEL_PATH"),
@@ -25,7 +29,7 @@ def _load_model():
     """
     Lazy-load the trained ML model and optional metadata.
     """
-    global _MODEL, _MODEL_INFO
+    global _MODEL, _MODEL_INFO, _DECISION_THRESHOLD
 
     if _MODEL is not None:
         return _MODEL
@@ -51,7 +55,21 @@ def _load_model():
     except FileNotFoundError:
         _MODEL_INFO = None
 
-    logger.info("Loaded IDS ML model from %s", model_path)
+    # Load decision threshold from metadata if present
+    if _MODEL_INFO is not None:
+        try:
+            # train_model.py writes this key
+            _DECISION_THRESHOLD = float(_MODEL_INFO.get("decision_threshold", 0.5))
+        except Exception:
+            _DECISION_THRESHOLD = 0.5
+    else:
+        _DECISION_THRESHOLD = 0.5
+
+    logger.info(
+        "Loaded IDS ML model from %s (decision_threshold=%.3f)",
+        model_path,
+        _DECISION_THRESHOLD,
+    )
     return _MODEL
 
 
@@ -191,3 +209,26 @@ def get_model_info() -> Dict[str, Any] | None:
     if _MODEL is None:
         _load_model()
     return _MODEL_INFO
+
+
+def get_decision_threshold() -> float:
+    """
+    Return the decision threshold being used to classify events as malicious.
+    This value is loaded from model_info.json (decision_threshold) or
+    defaults to 0.5.
+    """
+    global _MODEL, _DECISION_THRESHOLD
+    if _MODEL is None:
+        _load_model()
+    return _DECISION_THRESHOLD
+
+
+def classify_with_threshold(event: Dict[str, Any]) -> bool:
+    """
+    Convenience helper: classify an event using the learned decision threshold.
+
+    Returns True if the event should be considered malicious, False otherwise.
+    """
+    score = ml_score(event)
+    threshold = get_decision_threshold()
+    return score >= threshold

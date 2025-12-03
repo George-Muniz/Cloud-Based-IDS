@@ -18,7 +18,6 @@ import csv
 # For reproducibility
 RANDOM_SEED = 42
 
-
 # -------------------------------------------------------
 #  Feature extraction (must match ids_core/model.py)
 # -------------------------------------------------------
@@ -77,6 +76,7 @@ def load_csic_labeled():
     print(f"[CSIC] Loaded {len(X)} samples.")
     return X, y
 
+
 def load_sample_logs():
     """
     Load the small sample_logs.csv file for evaluation.
@@ -118,6 +118,7 @@ def load_sample_logs():
 
     print(f"[SAMPLE] Loaded {len(X)} sample rows.")
     return X, y
+
 
 # -------------------------------------------------------
 #  Option B: Synthetic data generator (fallback)
@@ -214,8 +215,18 @@ def main():
 
     clf.fit(X_train, y_train)
 
-    # Evaluation
-    y_pred = clf.predict(X_test)
+    # ---------------------------------------------------
+    # Evaluation on test set with threshold-based prediction
+    # ---------------------------------------------------
+    decision_threshold = 0.7  # adjust between 0.5 and 0.9 to tune aggressiveness
+
+    if hasattr(clf, "predict_proba"):
+        y_proba = clf.predict_proba(X_test)[:, 1]
+        y_pred = (y_proba >= decision_threshold).astype(int)
+    else:
+        # Fallback to default classifier behavior if predict_proba is unavailable
+        y_pred = clf.predict(X_test)
+
     acc = accuracy_score(y_test, y_pred)
     cm = confusion_matrix(y_test, y_pred)
 
@@ -225,14 +236,19 @@ def main():
     print(cm)
     print("\nClassification report:")
     print(classification_report(y_test, y_pred, digits=3))
-    
+
     # ---------------------------------------------------
-    # evaluate on data/sample_logs.csv if present
+    # Evaluate on data/sample_logs.csv if present
     # ---------------------------------------------------
     X_samp, y_samp = load_sample_logs()
     if X_samp is not None and y_samp is not None and len(X_samp) > 0:
         print("\n=== Evaluation on sample_logs.csv ===")
-        y_samp_pred = clf.predict(X_samp)
+
+        if hasattr(clf, "predict_proba"):
+            y_samp_proba = clf.predict_proba(X_samp)[:, 1]
+            y_samp_pred = (y_samp_proba >= decision_threshold).astype(int)
+        else:
+            y_samp_pred = clf.predict(X_samp)
 
         acc_samp = accuracy_score(y_samp, y_samp_pred)
         cm_samp = confusion_matrix(y_samp, y_samp_pred)
@@ -242,7 +258,6 @@ def main():
         print(cm_samp)
         print("\nClassification report:")
         print(classification_report(y_samp, y_samp_pred, digits=3))
-
 
     # Save model + metadata into ids_core
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -280,6 +295,8 @@ def main():
         "positive_label": 1,
         "label_meaning": {"0": "benign", "1": "malicious"},
         "random_seed": RANDOM_SEED,
+        # NEW: store threshold so runtime can use the same value
+        "decision_threshold": float(decision_threshold),
     }
 
     with open(model_path, "wb") as f:
