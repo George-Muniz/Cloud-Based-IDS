@@ -100,10 +100,9 @@ def analyze_batch(gs_path: str = Query(..., description="gs://bucket/path.csv"))
         }
 
         # 4) Print to stdout so App Engine definitely captures it
-        #    This will show up in Cloud Logging as textPayload.
         print("IDS_RESULTS_LOG " + json.dumps(log_payload), flush=True)
 
-        # (Optional) still log via logging module too
+        # still log via logging module too
         try:
             logger.info("IDS_RESULTS_LOG " + json.dumps(log_payload))
         except Exception:
