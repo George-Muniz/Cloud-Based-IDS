@@ -2,7 +2,7 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from ids_core.detector import detect
-from ids_core.batch import analyze_batch
+from ids_core.batch import analyze_batch as analyze_batch_core
 import os
 import logging
 import json
@@ -71,6 +71,7 @@ def analyze(event: Event):
             "scope": "single_event",
             "error": str(e),
         }))
+        # For single-event we keep the old behaviour (no HTTPException)
         return {"error": str(e)}
 
 
@@ -82,10 +83,10 @@ def analyze_batch(gs_path: str = Query(..., description="gs://bucket/path.csv"))
       /analyze_batch?gs_path=gs://ids-logs-george-thomas/sample_logs.csv
     """
     try:
-        # 1) Run your existing batch logic
-        summary = analyze_batch(gs_path)
+        # 1) Run your existing batch logic (note: using the aliased core function)
+        summary = analyze_batch_core(gs_path)
 
-        # 2) Update in-memory stats (unchanged)
+        # 2) Update in-memory stats
         _stats["total_events"] += summary.get("total_events", 0)
         _stats["alerts"] += summary.get("flagged", 0)
 
@@ -110,6 +111,23 @@ def analyze_batch(gs_path: str = Query(..., description="gs://bucket/path.csv"))
 
         # 5) Return the full summary as before
         return summary
+
+    except HTTPException as e:
+        # If something already raised an HTTPException, just log and re-raise
+        _stats["errors"] += 1
+        error_payload = {
+            "log_type": "IDS_ERROR",
+            "scope": "batch",
+            "dataset": gs_path,
+            "error": str(e.detail),
+        }
+        print("IDS_RESULTS_ERROR " + json.dumps(error_payload), flush=True)
+        try:
+            logger.error("IDS_RESULTS_ERROR " + json.dumps(error_payload))
+        except Exception:
+            pass
+        raise e
+
     except Exception as e:
         _stats["errors"] += 1
 
