@@ -8,7 +8,7 @@ env_variables:
   GCS_LOG_BUCKET: "ids-logs-george-thomas"
   IPINFO_TOKEN: "fc1cac7b1c3f2f"
 
-  IDS_MAX_ROWS: "500"
+  IDS_MAX_ROWS: "10000"
   IDS_MAX_DETAILS: "100"
 
 automatic_scaling:
