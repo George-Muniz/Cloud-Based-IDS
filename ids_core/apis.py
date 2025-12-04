@@ -4,7 +4,7 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# Optional: IPinfo token for higher rate limits / more fields
+# IPinfo token for higher rate limits / more fields
 IPINFO_TOKEN = os.getenv("IPINFO_TOKEN")
 
 try:

@@ -218,7 +218,7 @@ def main():
     # ---------------------------------------------------
     # Evaluation on test set with threshold-based prediction
     # ---------------------------------------------------
-    decision_threshold = 0.7  # adjust between 0.5 and 0.9 to tune aggressiveness
+    decision_threshold = 0.55  # adjust between 0.4 and 0.6 to tune aggressiveness
 
     if hasattr(clf, "predict_proba"):
         y_proba = clf.predict_proba(X_test)[:, 1]
