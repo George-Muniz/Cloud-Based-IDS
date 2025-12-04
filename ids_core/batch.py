@@ -101,7 +101,7 @@ def _log_batch_metrics(gs_path: str, summary: Dict[str, Any]) -> None:
 
 
 # Caps to avoid blowing up on large files
-MAX_ROWS = int(os.getenv("IDS_MAX_ROWS", "20000"))
+MAX_ROWS = int(os.getenv("IDS_MAX_ROWS", "10000"))
 MAX_DETAILS = int(os.getenv("IDS_MAX_DETAILS", "100"))
 
 def analyze_batch(gs_path: str) -> Dict[str, Any]:
