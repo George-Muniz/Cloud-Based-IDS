@@ -112,12 +112,14 @@ def detect(event: Dict[str, Any]) -> Dict[str, Any]:
     Returns a dict (backwards compatible):
         {
             "is_malicious": bool,
-            "score": float,          # combined score
-            "rule_score": float,     # 1.0 if any rule hits else 0.0
-            "ml_score": float,       # probability from ML model
+            "is_intrusion": bool,
+            "score": float,
+            "rule_score": float,
+            "ml_score": float,
+            "ml_probability": float,
             "rules_triggered": [...],
             "severity": "low|medium|high",
-            "geo": {...},            # optional GeoIP fields
+            "geo": {...},  # optional
         }
     """
     normalized = _normalize_event(event)
@@ -128,15 +130,15 @@ def detect(event: Dict[str, Any]) -> Dict[str, Any]:
     rule_score = 1.0 if rule_hit else 0.0
     rules_triggered = rule_result.get("rules_triggered", [])
 
-    # 2) ML-based detection (probability in [0,1])
+    # 2) ML-based detection
     ml_prob = ml_score(normalized)
     ml_threshold = get_decision_threshold()
     ml_hit = ml_prob >= ml_threshold
 
-    # 3) Fusion: weighted combination for smoother severity
+    # 3) Fusion
     combined_score = 0.6 * ml_prob + 0.4 * rule_score
 
-    # Final decision: if rules OR ML say "bad", treat as malicious
+    # Final decision: rules OR ML
     suspicious = rule_hit or ml_hit
 
     # Severity heuristic
@@ -150,17 +152,24 @@ def detect(event: Dict[str, Any]) -> Dict[str, Any]:
         severity = "none"
 
     result: Dict[str, Any] = {
+        # Backwards-compatible booleans
         "is_intrusion": bool(suspicious),
-        "malicious": bool(suspicious),
+        "is_malicious": bool(suspicious),
+        "malicious": bool(suspicious),   # extra alias, harmless
 
+        # Scores
         "score": float(combined_score),
+        "rule_score": float(rule_score),
+        "ml_score": float(ml_prob),
         "ml_probability": float(ml_prob),
+
+        # Extras
         "rules_triggered": rules_triggered,
         "normalized_event": normalized,
         "severity": severity,
         "source": "ids_v1",
     }
-    return result
+
     # GeoIP lookup for malicious events
     src_ip = normalized.get("src_ip")
     if suspicious and src_ip:
@@ -171,7 +180,7 @@ def detect(event: Dict[str, Any]) -> Dict[str, Any]:
             geo = {}
         result["geo"] = geo
 
-    # Log in a structured way for Cloud Logging / dashboards
+    # Structured logging
     _log_structured_detection(event, normalized, result)
 
     return result
