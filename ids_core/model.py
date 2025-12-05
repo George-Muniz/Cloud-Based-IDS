@@ -2,10 +2,10 @@ import os
 import json
 import logging
 from typing import Dict, Any, List
-
+import math
 import numpy as np
 import pickle
-
+from collections import Counter
 logger = logging.getLogger(__name__)
 
 _MODEL = None
@@ -112,6 +112,15 @@ def _get_payload(event: Dict[str, Any]) -> str:
 
     return ""
 
+def shannon_entropy(text: str) -> float:
+    """
+    Compute Shannon entropy of a string. Must match training-side definition.
+    """
+    if not text:
+        return 0.0
+    counts = Counter(text)
+    length = len(text)
+    return -sum((freq / length) * math.log2(freq / length) for freq in counts.values())
 
 def _extract_features(event: Dict[str, Any]) -> Dict[str, float]:
     """
@@ -121,20 +130,53 @@ def _extract_features(event: Dict[str, Any]) -> Dict[str, float]:
     - payload_length
     - has_admin_in_payload
     - has_select_in_payload
+    - num_special_chars
+    - num_digits
+    - path_depth
+    - has_sql_keywords
+    - has_xss_pattern
+    - payload_entropy
     """
     path = _get_path(event)
     payload = _get_payload(event)
     payload_lower = payload.lower()
 
+    path_length = len(path)
+    payload_length = len(payload)
+
+    has_admin_in_payload = 1.0 if "admin" in payload_lower else 0.0
+    has_select_in_payload = 1.0 if "select" in payload_lower else 0.0
+
+    num_special_chars = sum(
+        1 for c in payload
+        if not c.isalnum() and not c.isspace()
+    )
+    num_digits = sum(1 for c in payload if c.isdigit())
+
+    path_depth = len([segment for segment in path.split("/") if segment])
+
+    sql_keywords = ("union", "select", "insert", "update", "delete", "drop", "where")
+    has_sql_keywords = 1.0 if any(kw in payload_lower for kw in sql_keywords) else 0.0
+
+    xss_tokens = ("<script", "onerror=", "onload=", "javascript:")
+    has_xss_pattern = 1.0 if any(tok in payload_lower for tok in xss_tokens) else 0.0
+
+    payload_entropy = shannon_entropy(payload)
+
     features: Dict[str, float] = {
-        "path_length": float(len(path)),
-        "payload_length": float(len(payload)),
-        "has_admin_in_payload": 1.0 if "admin" in payload_lower else 0.0,
-        "has_select_in_payload": 1.0 if "select" in payload_lower else 0.0,
+        "path_length": float(path_length),
+        "payload_length": float(payload_length),
+        "has_admin_in_payload": float(has_admin_in_payload),
+        "has_select_in_payload": float(has_select_in_payload),
+        "num_special_chars": float(num_special_chars),
+        "num_digits": float(num_digits),
+        "path_depth": float(path_depth),
+        "has_sql_keywords": float(has_sql_keywords),
+        "has_xss_pattern": float(has_xss_pattern),
+        "payload_entropy": float(payload_entropy),
     }
 
     return features
-
 
 def ml_score(event: Dict[str, Any]) -> float:
     """
@@ -167,6 +209,12 @@ def ml_score(event: Dict[str, Any]) -> float:
                 "payload_length",
                 "has_admin_in_payload",
                 "has_select_in_payload",
+                "num_special_chars",
+                "num_digits",
+                "path_depth",
+                "has_sql_keywords",
+                "has_xss_pattern",
+                "payload_entropy",
             ]
     else:
         # No metadata at all: use the same hard-coded order
@@ -175,6 +223,12 @@ def ml_score(event: Dict[str, Any]) -> float:
             "payload_length",
             "has_admin_in_payload",
             "has_select_in_payload",
+            "num_special_chars",
+            "num_digits",
+            "path_depth",
+            "has_sql_keywords",
+            "has_xss_pattern",
+            "payload_entropy",
         ]
 
     x = np.array([[features.get(name, 0.0) for name in feature_order]], dtype=float)

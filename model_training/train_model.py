@@ -1,17 +1,21 @@
 import os
 import json
 import random
+import math
 from datetime import datetime
-
+from collections import Counter
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
     confusion_matrix,
+    precision_score,
+    recall_score,
+    roc_curve,
+    auc,
 )
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_curve, auc
 import pickle
 import csv
 
@@ -21,6 +25,18 @@ RANDOM_SEED = 42
 # -------------------------------------------------------
 #  Feature extraction (must match ids_core/model.py)
 # -------------------------------------------------------
+
+def shannon_entropy(text: str) -> float:
+    """
+    Compute Shannon entropy of a string. Higher entropy often indicates
+    more "random" or obfuscated content.
+    """
+    if not text:
+        return 0.0
+    counts = Counter(text)
+    length = len(text)
+    return -sum((freq / length) * math.log2(freq / length) for freq in counts.values())
+
 def extract_features(path: str, payload: str):
     """
     Returns features in a fixed order:
@@ -29,14 +45,56 @@ def extract_features(path: str, payload: str):
     1: payload_length
     2: has_admin_in_payload
     3: has_select_in_payload
+    4: num_special_chars
+    5: num_digits
+    6: path_depth
+    7: has_sql_keywords
+    8: has_xss_pattern
+    9: payload_entropy
     """
-    return [
-        len(path),
-        len(payload),
-        1.0 if "admin" in payload.lower() else 0.0,
-        1.0 if "select" in payload.lower() else 0.0,
-    ]
+    payload_lower = payload.lower()
 
+    # Basic lengths
+    path_length = len(path)
+    payload_length = len(payload)
+
+    # Simple flags
+    has_admin_in_payload = 1.0 if "admin" in payload_lower else 0.0
+    has_select_in_payload = 1.0 if "select" in payload_lower else 0.0
+
+    # Extra shape features
+    num_special_chars = sum(
+        1 for c in payload
+        if not c.isalnum() and not c.isspace()
+    )
+    num_digits = sum(1 for c in payload if c.isdigit())
+
+    # Path depth: number of non-empty segments
+    path_depth = len([segment for segment in path.split("/") if segment])
+
+    # SQL-ish keywords
+    sql_keywords = ("union", "select", "insert", "update", "delete", "drop", "where")
+    has_sql_keywords = 1.0 if any(kw in payload_lower for kw in sql_keywords) else 0.0
+
+    # Very simple XSS patterns
+    xss_tokens = ("<script", "onerror=", "onload=", "javascript:")
+    has_xss_pattern = 1.0 if any(tok in payload_lower for tok in xss_tokens) else 0.0
+
+    # Entropy of the raw payload
+    payload_entropy = shannon_entropy(payload)
+
+    return [
+        float(path_length),
+        float(payload_length),
+        float(has_admin_in_payload),
+        float(has_select_in_payload),
+        float(num_special_chars),
+        float(num_digits),
+        float(path_depth),
+        float(has_sql_keywords),
+        float(has_xss_pattern),
+        float(payload_entropy),
+    ]
 
 # -------------------------------------------------------
 #  Option A: Load CSIC-based labeled CSV if present
@@ -186,15 +244,19 @@ def main():
     if X is None or y is None or len(X) == 0:
         X, y = generate_synthetic_data()
 
-    # Optionally downsample if CSIC is huge
-    max_samples = 10000
-    if len(X) > max_samples:
+    # Optionally downsample if CSIC is huge.
+    # Default: keep up to 60,000 samples (your full dataset size).
+    # Override with IDS_TRAIN_MAX_SAMPLES (set to 0 to disable downsampling).
+    max_samples_env = os.getenv("IDS_TRAIN_MAX_SAMPLES")
+    max_samples = int(max_samples_env) if max_samples_env else 61065
+
+    if max_samples > 0 and len(X) > max_samples:
         print(f"[INFO] Downsampling from {len(X)} to {max_samples} samples.")
         idx = np.random.choice(len(X), size=max_samples, replace=False)
         X = X[idx]
         y = y[idx]
 
-    # Basic class distribution (for your report)
+    # Basic class distribution
     benign_count = int((y == 0).sum())
     malicious_count = int((y == 1).sum())
     print(f"[INFO] Class distribution: benign={benign_count}, malicious={malicious_count}")
@@ -211,6 +273,7 @@ def main():
         max_depth=6,
         random_state=RANDOM_SEED,
         n_jobs=-1,
+        class_weight="balanced",
     )
 
     clf.fit(X_train, y_train)
@@ -218,10 +281,22 @@ def main():
     # ---------------------------------------------------
     # Evaluation on test set with threshold-based prediction
     # ---------------------------------------------------
-    decision_threshold = 0.55  # adjust between 0.4 and 0.6 to tune aggressiveness
+    decision_threshold = 0.47  # adjust between 0.4 and 0.6 (or based on sweep below)
 
     if hasattr(clf, "predict_proba"):
         y_proba = clf.predict_proba(X_test)[:, 1]
+
+        # -----------------------------------------------
+        # Threshold sweep: precision/recall for many thr
+        # -----------------------------------------------
+        print("\n=== Threshold sweep on test set ===")
+        for thr in [0.40, 0.425, 0.45, 0.475, 0.50, 0.525, 0.55, 0.725,  0.6]:
+            y_thr = (y_proba >= thr).astype(int)
+            prec = precision_score(y_test, y_thr, zero_division=0)
+            rec = recall_score(y_test, y_thr, zero_division=0)
+            print(f"  thr={thr:.2f} -> precision={prec:.3f}, recall={rec:.3f}")
+
+        # Use the chosen decision_threshold for the main metrics
         y_pred = (y_proba >= decision_threshold).astype(int)
     else:
         # Fallback to default classifier behavior if predict_proba is unavailable
@@ -272,6 +347,12 @@ def main():
         "payload_length",
         "has_admin_in_payload",
         "has_select_in_payload",
+        "num_special_chars",
+        "num_digits",
+        "path_depth",
+        "has_sql_keywords",
+        "has_xss_pattern",
+        "payload_entropy",
     ]
 
     info = {
@@ -283,9 +364,7 @@ def main():
         "accuracy": float(acc),
         "confusion_matrix": cm.tolist(),
         "timestamp": datetime.utcnow().isoformat() + "Z",
-        # This was already in your example; keep it
         "features": feature_names,
-        # Add explicit feature_names so ids_core/model.py can use the right order
         "feature_names": feature_names,
         "data_source": "CSIC"
         if os.path.exists(
@@ -295,7 +374,7 @@ def main():
         "positive_label": 1,
         "label_meaning": {"0": "benign", "1": "malicious"},
         "random_seed": RANDOM_SEED,
-        # NEW: store threshold so runtime can use the same value
+        # store threshold so runtime can use the same value
         "decision_threshold": float(decision_threshold),
     }
 

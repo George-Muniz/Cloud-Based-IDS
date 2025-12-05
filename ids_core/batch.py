@@ -99,9 +99,14 @@ def _log_batch_metrics(gs_path: str, summary: Dict[str, Any]) -> None:
 
         logger.info("IDS_BATCH_SUMMARY %s", json.dumps(payload))
 
+# Default batch caps; can be overridden by env
+_default_max_rows = 10000
 
-# Caps to avoid blowing up on large files
-MAX_ROWS = int(os.getenv("IDS_MAX_ROWS", "10000"))
+# If we're on a GCE VM (where we can handle more load), increase default
+if os.getenv("RUNNING_ON_GCE"):
+    _default_max_rows = 30000
+
+MAX_ROWS = int(os.getenv("IDS_MAX_ROWS", str(_default_max_rows)))
 MAX_DETAILS = int(os.getenv("IDS_MAX_DETAILS", "100"))
 
 def analyze_batch(gs_path: str) -> Dict[str, Any]:

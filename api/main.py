@@ -23,13 +23,21 @@ class Event(BaseModel):
     method: str
     payload: str
 
-
+# Global single-event stats
 _stats = {
     "total_events": 0,
     "alerts": 0,
     "errors": 0,
 }
 
+# Global batch stats (for /summary endpoint)
+_batch_stats = {
+    "last_dataset": None,
+    "last_total_events": 0,
+    "last_flagged": 0,
+    "last_flagged_ratio": 0.0,
+    "last_skipped": 0,
+}
 
 @app.get("/health")
 def health():
@@ -89,6 +97,13 @@ def analyze_batch(gs_path: str = Query(..., description="gs://bucket/path.csv"))
         # 2) Update in-memory stats
         _stats["total_events"] += summary.get("total_events", 0)
         _stats["alerts"] += summary.get("flagged", 0)
+        # 2b) Record last batch summary for /summary endpoint
+        _batch_stats["last_dataset"] = gs_path
+        _batch_stats["last_total_events"] = summary.get("total_events", 0)
+        _batch_stats["last_flagged"] = summary.get("flagged", 0)
+        _batch_stats["last_flagged_ratio"] = summary.get("flagged_ratio", 0.0)
+        _batch_stats["last_skipped"] = summary.get("skipped", 0)
+
 
         # 3) Build a structured summary line
         log_payload = {
@@ -149,13 +164,19 @@ def analyze_batch(gs_path: str = Query(..., description="gs://bucket/path.csv"))
 
 @app.get("/summary")
 def summary():
+    alert_ratio = (
+        _stats["alerts"] / _stats["total_events"]
+        if _stats["total_events"] else 0.0
+    )
+
     return {
         "total_events": _stats["total_events"],
         "alerts": _stats["alerts"],
         "errors": _stats["errors"],
-        "alert_ratio": (_stats["alerts"] / _stats["total_events"])
-                        if _stats["total_events"] else 0.0,
+        "alert_ratio": alert_ratio,
+        "last_batch": _batch_stats,
     }
+
 
 
 @app.get("/model_info")

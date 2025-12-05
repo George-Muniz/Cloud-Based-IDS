@@ -2,31 +2,43 @@
   "algorithm": "RandomForestClassifier",
   "n_estimators": 200,
   "max_depth": 6,
-  "train_size": 7500,
-  "test_size": 2500,
-  "accuracy": 0.7708,
+  "train_size": 45798,
+  "test_size": 15267,
+  "accuracy": 0.765376301827471,
   "confusion_matrix": [
     [
-      1147,
-      323
+      5911,
+      3089
     ],
     [
-      250,
-      780
+      493,
+      5774
     ]
   ],
-  "timestamp": "2025-12-04T19:44:02.708552Z",
+  "timestamp": "2025-12-04T23:42:04.322702Z",
   "features": [
     "path_length",
     "payload_length",
     "has_admin_in_payload",
-    "has_select_in_payload"
+    "has_select_in_payload",
+    "num_special_chars",
+    "num_digits",
+    "path_depth",
+    "has_sql_keywords",
+    "has_xss_pattern",
+    "payload_entropy"
   ],
   "feature_names": [
     "path_length",
     "payload_length",
     "has_admin_in_payload",
-    "has_select_in_payload"
+    "has_select_in_payload",
+    "num_special_chars",
+    "num_digits",
+    "path_depth",
+    "has_sql_keywords",
+    "has_xss_pattern",
+    "payload_entropy"
   ],
   "data_source": "CSIC",
   "positive_label": 1,
@@ -35,5 +47,5 @@
     "1": "malicious"
   },
   "random_seed": 42,
-  "decision_threshold": 0.55
+  "decision_threshold": 0.5
 }

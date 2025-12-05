@@ -1,7 +1,7 @@
 import logging
 import json
 from typing import Dict, Any
-from .model import ml_score
+from .model import ml_score, get_decision_threshold
 from .rules import rule_engine
 from .apis import geoip_lookup
 
@@ -124,17 +124,21 @@ def detect(event: Dict[str, Any]) -> Dict[str, Any]:
 
     # 1) Rule-based detection
     rule_result = rule_engine(normalized)
-    rule_score = 1.0 if rule_result.get("is_intrusion") else 0.0
+    rule_hit = bool(rule_result.get("is_intrusion"))
+    rule_score = 1.0 if rule_hit else 0.0
     rules_triggered = rule_result.get("rules_triggered", [])
 
-    # 2) ML-based detection
-    ml_prob = ml_score(normalized)  # float in [0,1]
+    # 2) ML-based detection (probability in [0,1])
+    ml_prob = ml_score(normalized)
+    ml_threshold = get_decision_threshold()
+    ml_hit = ml_prob >= ml_threshold
 
-    # Simple fusion: take the max of the two scores
-    combined_score = max(rule_score, ml_prob)
+    # 3) Fusion: weighted combination for smoother severity
+    combined_score = 0.6 * ml_prob + 0.4 * rule_score
 
-    # Thresholds – you can tune these:
-    suspicious = combined_score >= 0.5
+
+    # Final decision: if rules OR ML say "bad", treat as malicious
+    suspicious = rule_hit or ml_hit
 
     # Severity heuristic
     if combined_score >= 0.9 or len(rules_triggered) >= 3:
