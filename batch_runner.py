@@ -4,12 +4,11 @@ import json
 
 from google.cloud import storage
 import requests
-
+#A CLI helper script that calls the batch analyzer locally.
+#Used for testing without hitting the API.
 
 def upload_to_gcs(local_path: str, bucket_name: str, object_name: str) -> str:
-    """
-    Uploads a local file to GCS and returns the gs:// path.
-    """
+    # Uploads a local file to GCS and returns the gs:// path.
     client = storage.Client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(object_name)
@@ -22,12 +21,7 @@ def upload_to_gcs(local_path: str, bucket_name: str, object_name: str) -> str:
 
 
 def call_analyze_batch(base_url: str, gs_path: str):
-    """
-    Calls the /analyze_batch endpoint with the given gs_path.
-    Example base_url:
-      - http://VM_EXTERNAL_IP:8080
-      - https://PROJECT_ID.REGION_ID.r.appspot.com
-    """
+    # Calls the /analyze_batch endpoint with the given gs_path.
     url = f"{base_url.rstrip('/')}/analyze_batch"
     params = {"gs_path": gs_path}
     print(f"Calling {url} with gs_path={gs_path} ...")

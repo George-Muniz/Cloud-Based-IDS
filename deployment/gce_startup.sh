@@ -1,4 +1,3 @@
-#!/bin/bash
 # GCE startup script for Cloud-Based IDS
 # Runs FastAPI (api.main:app) on port 8080 inside a virtualenv.
 

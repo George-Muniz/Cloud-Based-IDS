@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 from urllib.parse import urlparse
 from google.cloud import storage
 from .detector import detect
-
+#Processes large log files, applies the detector to many entries, counts flagged events.
 logger = logging.getLogger(__name__)
 
 # structured logger for batch-level metrics

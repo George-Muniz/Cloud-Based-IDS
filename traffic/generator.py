@@ -3,7 +3,7 @@ import json
 import random
 import time
 import requests
-
+# Contains small example log files used to quickly test the IDS.
 def load_samples(path="traffic/sample_requests.json"):
     with open(path) as f:
         return json.load(f)

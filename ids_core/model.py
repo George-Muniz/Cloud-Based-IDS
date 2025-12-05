@@ -49,7 +49,7 @@ def _load_model():
     with open(model_path, "rb") as f:
         _MODEL = pickle.load(f)
 
-    # Optional metadata (feature names etc.)
+    # metadata (feature names etc.)
     try:
         with open(_MODEL_INFO_PATH, "r") as f:
             _MODEL_INFO = json.load(f)
@@ -254,7 +254,6 @@ def ml_score(event: Dict[str, Any]) -> float:
     # Clamp to [0, 1] for safety
     return max(0.0, min(1.0, score))
 
-
 def get_model_info() -> Dict[str, Any] | None:
     """
     Optional helper: return the model metadata (e.g., for debugging or
@@ -264,7 +263,6 @@ def get_model_info() -> Dict[str, Any] | None:
     if _MODEL is None:
         _load_model()
     return _MODEL_INFO
-
 
 def get_decision_threshold() -> float:
     """
@@ -277,11 +275,9 @@ def get_decision_threshold() -> float:
         _load_model()
     return _DECISION_THRESHOLD
 
-
 def classify_with_threshold(event: Dict[str, Any]) -> bool:
     """
     Convenience helper: classify an event using the learned decision threshold.
-
     Returns True if the event should be considered malicious, False otherwise.
     """
     score = ml_score(event)

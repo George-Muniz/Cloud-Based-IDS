@@ -52,7 +52,7 @@ def analyze(event: Event):
         # Update global counters
         _stats["total_events"] += 1
 
-        # Be robust: accept either 'is_intrusion' or 'malicious'
+        # accept either 'is_intrusion' or 'malicious'
         is_malicious = bool(
             result.get("is_intrusion") or result.get("malicious")
         )
@@ -93,13 +93,9 @@ def analyze(event: Event):
 
 @app.get("/analyze_batch")
 def analyze_batch(gs_path: str = Query(..., description="gs://bucket/path.csv")):
-    """
-    Batch analyze a CSV stored in Google Cloud Storage.
-    Example:
-      /analyze_batch?gs_path=gs://ids-logs-george-thomas/sample_logs.csv
-    """
+    # Batch analyze a CSV stored in Google Cloud Storage.
     try:
-        # 1) Run your existing batch logic (note: using the aliased core function)
+        # 1) Run your existing batch logic using the aliased core function
         summary = run_batch_analysis(gs_path)
 
         # 2) Update in-memory stats
@@ -111,7 +107,6 @@ def analyze_batch(gs_path: str = Query(..., description="gs://bucket/path.csv"))
         _batch_stats["last_flagged"] = summary.get("flagged", 0)
         _batch_stats["last_flagged_ratio"] = summary.get("flagged_ratio", 0.0)
         _batch_stats["last_skipped"] = summary.get("skipped", 0)
-
 
         # 3) Build a structured summary line
         log_payload = {

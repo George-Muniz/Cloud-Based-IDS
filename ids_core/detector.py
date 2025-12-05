@@ -4,7 +4,7 @@ from typing import Dict, Any
 from .model import ml_score, get_decision_threshold
 from .rules import rule_engine
 from .apis import geoip_lookup
-
+#Contains the detection rules, ML model loading, and single-event detection logic.
 logger = logging.getLogger(__name__)
 
 # structured logging to Cloud Logging
@@ -136,7 +136,6 @@ def detect(event: Dict[str, Any]) -> Dict[str, Any]:
     # 3) Fusion: weighted combination for smoother severity
     combined_score = 0.6 * ml_prob + 0.4 * rule_score
 
-
     # Final decision: if rules OR ML say "bad", treat as malicious
     suspicious = rule_hit or ml_hit
 
@@ -162,7 +161,6 @@ def detect(event: Dict[str, Any]) -> Dict[str, Any]:
         "source": "ids_v1",
     }
     return result
-
     # GeoIP lookup for malicious events
     src_ip = normalized.get("src_ip")
     if suspicious and src_ip:

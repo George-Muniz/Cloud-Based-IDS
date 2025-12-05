@@ -1,3 +1,5 @@
+#Configuration file for Google App Engine.
+#Defines runtime, entrypoint, scaling settings, environment variables.
 runtime: python311
 
 entrypoint: gunicorn -k uvicorn.workers.UvicornWorker -b :$PORT api.main:app
