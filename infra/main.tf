@@ -50,7 +50,7 @@ resource "google_storage_bucket_iam_member" "ids_sa_writer" {
 # 5) Compute Engine VM for the IDS agent / generator
 resource "google_compute_instance" "ids_vm" {
   name         = "ids-gce-vm"
-  machine_type = "e2-micro"
+  machine_type = "e2-standard-2"
   zone         = var.zone
 
   boot_disk {
