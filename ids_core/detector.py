@@ -151,13 +151,17 @@ def detect(event: Dict[str, Any]) -> Dict[str, Any]:
         severity = "none"
 
     result: Dict[str, Any] = {
-        "is_malicious": suspicious,
+        "is_intrusion": bool(suspicious),
+        "malicious": bool(suspicious),
+
         "score": float(combined_score),
-        "rule_score": float(rule_score),
-        "ml_score": float(ml_prob),
+        "ml_probability": float(ml_prob),
         "rules_triggered": rules_triggered,
+        "normalized_event": normalized,
         "severity": severity,
+        "source": "ids_v1",
     }
+    return result
 
     # GeoIP lookup for malicious events
     src_ip = normalized.get("src_ip")

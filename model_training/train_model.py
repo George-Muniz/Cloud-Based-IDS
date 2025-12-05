@@ -2,9 +2,10 @@ import os
 import json
 import random
 import math
+import numpy as np
 from datetime import datetime
 from collections import Counter
-import numpy as np
+from datetime import datetime, timezone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
@@ -363,7 +364,7 @@ def main():
         "test_size": int(len(X_test)),
         "accuracy": float(acc),
         "confusion_matrix": cm.tolist(),
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "features": feature_names,
         "feature_names": feature_names,
         "data_source": "CSIC"

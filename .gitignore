@@ -1,26 +1,37 @@
+# ======================================================================
+# Base ignores (gcloud usually adds these)
+# ======================================================================
+.gcloudignore
+.git
+.gitignore
+
 # Python bytecode / cache
 __pycache__/
 *.py[cod]
-*.pyo
 *.pyc
+*.pyo
+*.pyd
+*.pdb
 
 # Virtual environments
 venv/
 .venv/
-.env/
 env/
-.venv/
+ENV/
+env.bak/
+venv.bak/
 
 # Editor / OS junk
 .DS_Store
-.idea/
 .vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+desktop.ini
 
 # Data (raw / large)
-data/*.csv
-data/*.log
-data/csic_logs_shuffled.csv
-data/csic_raw/
+data/
 
 # Local training artifacts that are re-generated
 ids_core/model.pkl
@@ -30,3 +41,6 @@ ids_core/model_info.json
 data/notebook_notes.md
 model_training/reports/*.png
 
+# Misc
+*.log
+*.tmp

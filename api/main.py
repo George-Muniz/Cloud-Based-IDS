@@ -43,15 +43,23 @@ _batch_stats = {
 def health():
     return {"status": "ok"}
 
-
 @app.post("/analyze")
 def analyze(event: Event):
     try:
-        result = detect(event.dict())
+        payload = event.dict()
+        result = detect(payload)
+
+        # Update global counters
         _stats["total_events"] += 1
-        if result["is_intrusion"]:
+
+        # Be robust: accept either 'is_intrusion' or 'malicious'
+        is_malicious = bool(
+            result.get("is_intrusion") or result.get("malicious")
+        )
+        if is_malicious:
             _stats["alerts"] += 1
 
+        # Try to log a single-event summary, but never break the API if it fails
         try:
             single_summary = {
                 "log_type": "IDS_SINGLE_EVENT",
@@ -59,7 +67,7 @@ def analyze(event: Event):
                 "dst_ip": event.dst_ip,
                 "path": event.path,
                 "method": event.method,
-                "is_intrusion": result.get("is_intrusion"),
+                "is_intrusion": is_malicious,
                 "score": result.get("score"),
             }
             logger.info(json.dumps(single_summary))
@@ -68,9 +76,10 @@ def analyze(event: Event):
             pass
 
         return {
-            "event": event.dict(),
+            "event": payload,
             "detection": result,
         }
+
     except Exception as e:
         _stats["errors"] += 1
         # Log the error as well
@@ -81,7 +90,6 @@ def analyze(event: Event):
         }))
         # For single-event we keep the old behaviour (no HTTPException)
         return {"error": str(e)}
-
 
 @app.get("/analyze_batch")
 def analyze_batch(gs_path: str = Query(..., description="gs://bucket/path.csv")):
