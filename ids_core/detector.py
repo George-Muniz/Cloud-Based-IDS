@@ -104,7 +104,6 @@ def _log_structured_detection(
     else:
         logger.info("IDS_DETECTION %s", json.dumps(payload))
 
-
 def detect(event: Dict[str, Any]) -> Dict[str, Any]:
     """
     Main detection entrypoint.
@@ -155,7 +154,7 @@ def detect(event: Dict[str, Any]) -> Dict[str, Any]:
         # Backwards-compatible booleans
         "is_intrusion": bool(suspicious),
         "is_malicious": bool(suspicious),
-        "malicious": bool(suspicious),   # extra alias, harmless
+        "malicious": bool(suspicious),  
 
         # Scores
         "score": float(combined_score),
